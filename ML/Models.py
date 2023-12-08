@@ -1,8 +1,9 @@
 from enum import Enum
 
+
 class Models(str, Enum):
-    CLINICAL_CT_LUNGS = 'clin_ct_lungs'
     CLINICAL_CT_ORGANS = 'clin_ct_organs'
+    CLINICAL_CT_LUNGS = 'clin_ct_lungs'
     CLINICAL_PET_TUMOR = 'clin_pt_fdg_tumor'
     CLINICAL_CT_BODY = 'clin_ct_body'
     CLINICAL_CT_RIBS = 'clin_ct_ribs'
@@ -14,5 +15,6 @@ class Models(str, Enum):
     CLINICAL_CT_DIGESTIVE = 'clin_ct_digestive'
     PRECLINICAL_MR_ALL = 'preclin_mr_all'
 
+    @staticmethod
     def get_all_options():
         return [m.value for m in Models]
