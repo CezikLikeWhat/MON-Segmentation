@@ -3,88 +3,232 @@ import vtk
 from PyQt5 import Qt
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
-from Utils.Logger import Logger
-
 
 class VTKSegmentation:
+    def __init__(self):
+        self.frame = Qt.QFrame()
+        self.renderWidget = QVTKRenderWindowInteractor(self.frame)
+        self.renderWindow = self.renderWidget.GetRenderWindow()
+        self.renderer = vtk.vtkRenderer()
+        self.renderWindow.AddRenderer(self.renderer)
+        self.renderWidget.SetRenderWindow(self.renderWindow)
 
-    @staticmethod
-    def create_mesh(nifti_file_path: str) -> Qt.QFrame:
-        Logger.info('Start create_mesh')
-        frame = Qt.QFrame()
-        vtkWidget = QVTKRenderWindowInteractor(frame)
+        self.polyData = vtk.vtkPolyData()
+        self.firstPolyData = vtk.vtkPolyData()
+        self.secondPolyData = vtk.vtkPolyData()
+        self.lookupTable = vtk.vtkLookupTable()
+        self.uniqueValues = set()
+        self.firstActor: vtk.vtkActor | None = None
+        self.secondActor: vtk.vtkActor | None = None
+        self.secondActorCenter: float | None = None
 
-        Logger.info('Before rendered')
-        ren = vtk.vtkRenderer()
-        vtkWidget.GetRenderWindow().AddRenderer(ren)
-        iren = vtkWidget.GetRenderWindow().GetInteractor()
+        self.translation = [0.0, 0.0, 0.0]
+        self.rotation = [0.0, 0.0, 0.0]
+        self.scale = [1.0, 1.0, 1.0]
 
-        Logger.info('Before reader')
+    def create_mesh(self, nifti_file_path: str) -> Qt.QFrame:
+        # Logger.info('Start create_mesh')
+
+        # iren = self.renderWindow.GetInteractor()
+
+        # Logger.info('Before reader')
         reader = vtk.vtkNIFTIImageReader()
         reader.SetFileName(nifti_file_path)
         reader.Update()
 
-        Logger.info('Before imagedata')
+        # Logger.info('Before imagedata')
         imageData: vtk.vtkImageData = reader.GetOutput()
 
         dimensions = imageData.GetDimensions()
 
         rawValues = np.array(imageData.GetPointData().GetScalars(), copy=False)
         rawValues = np.reshape(rawValues, (dimensions[0] * dimensions[1] * dimensions[2]))
-        uniqueValues = set()
 
         for i in range(len(rawValues)):
-            uniqueValues.add(rawValues[i])
+            self.uniqueValues.add(rawValues[i])
 
-        Logger.info('Before lookup table')
-        lookupTable = vtk.vtkLookupTable()
-        lookupTable.SetNumberOfColors(len(uniqueValues) + 1)
-        lookupTable.SetTableRange(0.0, len(uniqueValues))
-        lookupTable.SetScaleToLinear()
-        lookupTable.Build()
-        lookupTable.SetTableValue(0, 1.0, 1.0, 1.0)
+        # Logger.info('Before marching cubes')
+        marchingCubes = vtk.vtkDiscreteMarchingCubes()
+        marchingCubes.SetInputData(imageData)
+        marchingCubes.GenerateValues(len(self.uniqueValues) + 1, 0, len(self.uniqueValues))
+        marchingCubes.Update()
+        self.polyData = marchingCubes.GetOutput()
 
-        Logger.info('Before random Sequence')
+        # Logger.info('Before lookup table')
+        self.lookupTable.SetNumberOfColors(len(self.uniqueValues) + 1)
+        self.lookupTable.SetTableRange(0.0, len(self.uniqueValues))
+        self.lookupTable.SetScaleToLinear()
+        self.lookupTable.Build()
+        self.lookupTable.SetTableValue(0, 1.0, 1.0, 1.0)
+
+        # Logger.info('Before random Sequence')
         randomSequence = vtk.vtkMinimalStandardRandomSequence()
         randomSequence.SetSeed(2137)
 
-        for i in range(1, len(uniqueValues) + 1):
+        for i in range(1, len(self.uniqueValues) + 1):
             r = randomSequence.GetRangeValue(0.0, 1.0)
             randomSequence.Next()
             g = randomSequence.GetRangeValue(0.0, 1.0)
             randomSequence.Next()
             b = randomSequence.GetRangeValue(0.0, 1.0)
             randomSequence.Next()
-            lookupTable.SetTableValue(i, r, g, b)
+            self.lookupTable.SetTableValue(i, r, g, b)
 
-        Logger.info('Before marching cubes')
-        marchingCubes = vtk.vtkDiscreteMarchingCubes()
-        marchingCubes.SetInputData(imageData)
-        marchingCubes.GenerateValues(len(uniqueValues) + 1, 0, len(uniqueValues))
+        # Logger.info('Before mesh mapper')
+        if self.firstActor is not None:
+            self.renderer.RemoveActor(self.firstActor)
+            self.firstActor.FastDelete()
+            self.firstActor = None
 
-        Logger.info('Before mesh mapper')
-        mesh_mapper = vtk.vtkPolyDataMapper()
-        mesh_mapper.SetInputConnection(marchingCubes.GetOutputPort())
-        mesh_mapper.SetLookupTable(lookupTable)
-        mesh_mapper.SetScalarRange(0.0, lookupTable.GetNumberOfColors())
+        self.firstActor = self.create_actor(self.polyData, self.lookupTable)
 
-        Logger.info('Before actor')
-        mesh_actor = vtk.vtkActor()
-        mesh_actor.SetMapper(mesh_mapper)
+        self.renderer.AddActor(self.firstActor)
+        self.renderer.ResetCamera()
+        self.renderWindow.Render()
 
-        Logger.info('Before add actor')
-        ren.AddActor(mesh_actor)
-        ren.ResetCamera()  # setup camera that all objects will be visible
+        return self.frame
 
-        camera: vtk.vtkCamera = ren.GetActiveCamera()
-        camera.Elevation(100)
-        camera.Roll(180)
-        ren.SetActiveCamera(camera)
+    def match(self) -> Qt.QFrame | None:
+        if self.polyData is None:
+            return
 
-        vtkWidget.GetRenderWindow()
+        if self.firstActor is not None:
+            self.renderer.RemoveActor(self.firstActor)
+            self.firstActor.SetMapper(None)
+            self.firstActor = None
 
-        Logger.info('Before initialize and start')
-        iren.Initialize()
-        iren.Start()
+        self.firstPolyData = self.separatePolyData(self.polyData, 2.0, 2.0, False)
+        self.firstActor = self.create_actor(self.firstPolyData, self.lookupTable)
+        self.renderer.AddActor(self.firstActor)
 
-        return frame
+        if self.secondActor is not None:
+            self.renderer.RemoveActor(self.secondActor)
+            self.secondActor.SetMapper(None)
+            self.secondActor = None
+
+        self.secondPolyData = self.separatePolyData(self.polyData, 3.0, 3.0, True)
+        self.secondActor = self.create_actor(self.secondPolyData, self.lookupTable)
+        self.renderer.AddActor(self.secondActor)
+        self.secondActorCenter = self.secondActor.GetCenter()
+
+        self.renderer.ResetCamera()
+        self.renderWindow.Render()
+        return self.frame
+
+    def create_actor(self, poly_data: vtk.vtkPolyData, lookup_table: vtk.vtkLookupTable) -> vtk.vtkActor:
+        mapper = vtk.vtkPolyDataMapper()
+        mapper.SetInputData(poly_data)
+        mapper.SetLookupTable(lookup_table)
+        mapper.SetScalarRange(0.0, lookup_table.GetNumberOfColors())
+
+        actor = vtk.vtkActor()
+        actor.SetMapper(mapper)
+
+        return actor
+
+    def separatePolyData(self, poly_data: vtk.vtkPolyData, min_value: float, max_value: float,
+                         reflection: bool = False) -> vtk.vtkPolyData:
+        threshold = vtk.vtkThreshold()
+        threshold.SetInputData(poly_data)
+        threshold.SetLowerThreshold(min_value)
+        threshold.SetUpperThreshold(max_value)
+        threshold.Update()
+
+        surfaceFilter = vtk.vtkDataSetSurfaceFilter()
+
+        if reflection:
+            reflectionFilter = vtk.vtkReflectionFilter()
+            reflectionFilter.SetInputConnection(threshold.GetOutputPort())
+            reflectionFilter.CopyInputOff()
+            reflectionFilter.Update()
+            surfaceFilter.SetInputConnection(reflectionFilter.GetOutputPort())
+        else:
+            surfaceFilter.SetInputConnection(threshold.GetOutputPort())
+
+        surfaceFilter.Update()
+
+        output = vtk.vtkPolyData()
+        output.DeepCopy(surfaceFilter.GetOutput())
+
+        return output
+
+    # @staticmethod
+    # def create_mesh(nifti_file_path: str) -> Qt.QFrame:
+    #     # Logger.info('Start create_mesh')
+    #     frame = Qt.QFrame()
+    #     vtkWidget = QVTKRenderWindowInteractor(frame)
+    #
+    #     # Logger.info('Before rendered')
+    #     ren = vtk.vtkRenderer()
+    #     vtkWidget.GetRenderWindow().AddRenderer(ren)
+    #     iren = vtkWidget.GetRenderWindow().GetInteractor()
+    #
+    #     # Logger.info('Before reader')
+    #     reader = vtk.vtkNIFTIImageReader()
+    #     reader.SetFileName(nifti_file_path)
+    #     reader.Update()
+    #
+    #     # Logger.info('Before imagedata')
+    #     imageData: vtk.vtkImageData = reader.GetOutput()
+    #
+    #     dimensions = imageData.GetDimensions()
+    #
+    #     rawValues = np.array(imageData.GetPointData().GetScalars(), copy=False)
+    #     rawValues = np.reshape(rawValues, (dimensions[0] * dimensions[1] * dimensions[2]))
+    #     uniqueValues = set()
+    #
+    #     for i in range(len(rawValues)):
+    #         uniqueValues.add(rawValues[i])
+    #
+    #     # Logger.info('Before lookup table')
+    #     lookupTable = vtk.vtkLookupTable()
+    #     lookupTable.SetNumberOfColors(len(uniqueValues) + 1)
+    #     lookupTable.SetTableRange(0.0, len(uniqueValues))
+    #     lookupTable.SetScaleToLinear()
+    #     lookupTable.Build()
+    #     lookupTable.SetTableValue(0, 1.0, 1.0, 1.0)
+    #
+    #     # Logger.info('Before random Sequence')
+    #     randomSequence = vtk.vtkMinimalStandardRandomSequence()
+    #     randomSequence.SetSeed(2137)
+    #
+    #     for i in range(1, len(uniqueValues) + 1):
+    #         r = randomSequence.GetRangeValue(0.0, 1.0)
+    #         randomSequence.Next()
+    #         g = randomSequence.GetRangeValue(0.0, 1.0)
+    #         randomSequence.Next()
+    #         b = randomSequence.GetRangeValue(0.0, 1.0)
+    #         randomSequence.Next()
+    #         lookupTable.SetTableValue(i, r, g, b)
+    #
+    #     # Logger.info('Before marching cubes')
+    #     marchingCubes = vtk.vtkDiscreteMarchingCubes()
+    #     marchingCubes.SetInputData(imageData)
+    #     marchingCubes.GenerateValues(len(uniqueValues) + 1, 0, len(uniqueValues))
+    #
+    #     # Logger.info('Before mesh mapper')
+    #     mesh_mapper = vtk.vtkPolyDataMapper()
+    #     mesh_mapper.SetInputConnection(marchingCubes.GetOutputPort())
+    #     mesh_mapper.SetLookupTable(lookupTable)
+    #     mesh_mapper.SetScalarRange(0.0, lookupTable.GetNumberOfColors())
+    #
+    #     # Logger.info('Before actor')
+    #     mesh_actor = vtk.vtkActor()
+    #     mesh_actor.SetMapper(mesh_mapper)
+    #
+    #     # Logger.info('Before add actor')
+    #     ren.AddActor(mesh_actor)
+    #     ren.ResetCamera()  # setup camera that all objects will be visible
+    #
+    #     camera: vtk.vtkCamera = ren.GetActiveCamera()
+    #     camera.Elevation(100)
+    #     camera.Roll(180)
+    #     ren.SetActiveCamera(camera)
+    #
+    #     vtkWidget.GetRenderWindow()
+    #
+    #     # Logger.info('Before initialize and start')
+    #     iren.Initialize()
+    #     iren.Start()
+    #
+    #     return frame

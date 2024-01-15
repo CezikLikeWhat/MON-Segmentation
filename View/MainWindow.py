@@ -7,6 +7,7 @@ from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 from ML.Accelerators import Accelerators
 from ML.Models import Models
 from ML.MooseManager import MooseManager
+from ML.Organs import Organs
 from Utils import Utils
 from Utils.Logger import Logger
 from View.MessageBox import MessageBox, MessageBoxType
@@ -21,10 +22,13 @@ class MainWindow(Qt.QMainWindow):
         # Init variables
         self.model_type = ''
         self.model_accelerator = ''
+        self.organ = ''
         self.model_input_dir = ''
         self.model_output_dir = ''
         self.model_input_dir_button = None
         self.model_output_dir_button = None
+
+        self.vtkSegmentation = VTKSegmentation()
 
         self.vtkWidget = None
 
@@ -100,9 +104,40 @@ class MainWindow(Qt.QMainWindow):
 
         moose_groupbox.setLayout(moose_layout)
 
+        # Maching group box
+        match_groupbox = QGroupBox()
+        match_groupbox.setTitle('Matching')
+        match_groupbox.setMaximumSize(400, 400)
+
+        match_layout = QGridLayout()
+        match_layout.setColumnMinimumWidth(0, 20)
+        match_layout.setColumnMinimumWidth(1, 40)
+
+        organ_label = QLabel('Organ:')
+        organ_combobox = QComboBox()
+        organ_combobox.currentTextChanged.connect(self.organ_changed)
+        organ_combobox.setFixedWidth(175)
+        organ_combobox.addItems(Organs.get_all_options())
+
+        segment_button = QPushButton('Start segmenting')
+        segment_button.setFixedWidth(175)
+        segment_button.clicked.connect(self.start_segmenting)
+
+        adjust_button = QPushButton('Start adjusting')
+        adjust_button.setFixedWidth(175)
+        adjust_button.clicked.connect(self.start_adjusting)
+
+        match_layout.addWidget(organ_label, 0, 0)
+        match_layout.addWidget(organ_combobox, 0, 2)
+        match_layout.addWidget(segment_button, 1, 0)
+        match_layout.addWidget(adjust_button, 1, 2)
+
+        match_groupbox.setLayout(match_layout)
+
         # Group boxes layout
         groupbox_layout = QVBoxLayout()
         groupbox_layout.addWidget(moose_groupbox)
+        groupbox_layout.addWidget(match_groupbox)
 
         # Main layout
         main_layout = QHBoxLayout()
@@ -121,7 +156,7 @@ class MainWindow(Qt.QMainWindow):
                 (MessageBox())(self, MessageBoxType.ERROR, 'NIFTI file path not specified')
                 return
 
-        frame = VTKSegmentation.create_mesh(filepath)
+        frame = self.vtkSegmentation.create_mesh(filepath)
 
         self.setup_main_window(frame)  # update gui with new VTK frame
         self.show()
@@ -158,6 +193,14 @@ class MainWindow(Qt.QMainWindow):
 
         self.load_nifti_file(nifti_filepath)
 
+    def start_segmenting(self) -> None:
+        frame = self.vtkSegmentation.match()
+        self.setup_main_window(frame)
+        self.show()
+
+    def start_adjusting(self) -> None:
+        pass
+
     def load_input_directory_path(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, 'Choose input directory', '.')
         self.model_input_dir = directory
@@ -173,3 +216,6 @@ class MainWindow(Qt.QMainWindow):
 
     def model_accelerator_changed(self, value: str) -> None:
         self.model_accelerator = value
+
+    def organ_changed(self, value: str) -> None:
+        self.organ = value
