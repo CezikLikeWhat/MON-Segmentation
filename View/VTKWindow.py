@@ -81,14 +81,19 @@ class VTKSegmentation:
             self.firstActor = None
 
         self.firstActor = self.create_actor(self.polyData, self.lookupTable)
-
         self.renderer.AddActor(self.firstActor)
+
+        camera: vtk.vtkCamera = self.renderer.GetActiveCamera()
+        camera.Elevation(100)
+        camera.Roll(180)
+        self.renderer.SetActiveCamera(camera)
+
         self.renderer.ResetCamera()
         self.renderWindow.Render()
 
         return self.frame
 
-    def match(self) -> Qt.QFrame | None:
+    def match(self, first_organ_value: float, second_organ_value: float) -> Qt.QFrame | None:
         if self.polyData is None:
             return
 
@@ -97,7 +102,7 @@ class VTKSegmentation:
             self.firstActor.SetMapper(None)
             self.firstActor = None
 
-        self.firstPolyData = self.separatePolyData(self.polyData, 2.0, 2.0, False)
+        self.firstPolyData = self.separatePolyData(self.polyData, first_organ_value, first_organ_value, False)
         self.firstActor = self.create_actor(self.firstPolyData, self.lookupTable)
         self.renderer.AddActor(self.firstActor)
 
@@ -106,13 +111,72 @@ class VTKSegmentation:
             self.secondActor.SetMapper(None)
             self.secondActor = None
 
-        self.secondPolyData = self.separatePolyData(self.polyData, 3.0, 3.0, True)
+        self.secondPolyData = self.separatePolyData(self.polyData, second_organ_value, second_organ_value, True)
         self.secondActor = self.create_actor(self.secondPolyData, self.lookupTable)
         self.renderer.AddActor(self.secondActor)
         self.secondActorCenter = self.secondActor.GetCenter()
 
         self.renderer.ResetCamera()
         self.renderWindow.Render()
+        return self.frame
+
+    def adjust(self) -> Qt.QFrame:
+        distance = vtk.vtkHausdorffDistancePointSetFilter()
+        distance.SetInputData(0, self.firstPolyData)
+        distance.SetInputData(1, self.secondPolyData)
+        distance.Update()
+
+        distance_before_fit: vtk.VTK_POINT_SET = (distance.
+                                                  GetOutput(0).
+                                                  GetFieldData().
+                                                  GetArray("HausdorffDistance").
+                                                  GetComponent(0, 0)
+                                                  )
+
+        icp = vtk.vtkIterativeClosestPointTransform()
+        icp.SetSource(self.secondPolyData)
+        icp.SetTarget(self.firstPolyData)
+        icp.GetLandmarkTransform().SetModeToRigidBody()
+        icp.SetMaximumNumberOfLandmarks(500)
+        icp.SetMaximumMeanDistance(.00001)
+        icp.SetMaximumNumberOfIterations(500)
+        icp.CheckMeanDistanceOn()
+        icp.StartByMatchingCentroidsOn()
+        icp.Update()
+
+        lmTransform = icp.GetLandmarkTransform()
+        transformFilter = vtk.vtkTransformPolyDataFilter()
+        transformFilter.SetInputData(self.secondPolyData)
+        transformFilter.SetTransform(lmTransform)
+        transformFilter.SetTransform(icp)
+        transformFilter.Update()
+
+        distance.SetInputData(0, self.firstPolyData)
+        distance.SetInputData(1, transformFilter.GetOutput())
+        distance.Update()
+
+        distance_after_fit: vtk.VTK_POINT_SET = (distance.
+                                                 GetOutput(0).
+                                                 GetFieldData().
+                                                 GetArray("HausdorffDistance").
+                                                 GetComponent(0, 0)
+                                                 )
+
+        print(f'Distance before fit: {distance_before_fit}')
+        print(f'Distance after fit: {distance_after_fit}')
+
+        transformedPolyData = transformFilter.GetOutput()
+
+        if self.secondActor is not None:
+            self.renderer.RemoveActor(self.secondActor)
+            self.secondActor.SetMapper(None)
+            self.secondActor = None
+
+        self.secondActor = self.create_actor(transformedPolyData, self.lookupTable)
+
+        self.renderer.AddActor(self.secondActor)
+        self.renderWindow.Render()
+
         return self.frame
 
     def create_actor(self, poly_data: vtk.vtkPolyData, lookup_table: vtk.vtkLookupTable) -> vtk.vtkActor:

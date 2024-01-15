@@ -139,13 +139,15 @@ class MainWindow(Qt.QMainWindow):
         groupbox_layout.addWidget(moose_groupbox)
         groupbox_layout.addWidget(match_groupbox)
 
-        # Main layout
-        main_layout = QHBoxLayout()
-        main_layout.setSpacing(10)
-        main_layout.addLayout(groupbox_layout)
-        main_layout.addWidget(self.vtkWidget)
+        # init QFrame
+        if vtkFrame.layout() is None:
+            # Main layout
+            main_layout = QHBoxLayout()
+            main_layout.setSpacing(10)
+            main_layout.addLayout(groupbox_layout)
+            main_layout.addWidget(self.vtkWidget)
+            vtkFrame.setLayout(main_layout)
 
-        vtkFrame.setLayout(main_layout)
         self.setCentralWidget(vtkFrame)
 
     def load_nifti_file(self, filepath: str | None) -> None:
@@ -160,7 +162,6 @@ class MainWindow(Qt.QMainWindow):
 
         self.setup_main_window(frame)  # update gui with new VTK frame
         self.show()
-        Logger.info('After update gui')
 
     def start_predict(self) -> None:
         if self.model_input_dir == '':
@@ -194,12 +195,28 @@ class MainWindow(Qt.QMainWindow):
         self.load_nifti_file(nifti_filepath)
 
     def start_segmenting(self) -> None:
-        frame = self.vtkSegmentation.match()
+        first_organ = None
+        second_organ = None
+        print(self.organ)
+        match self.organ:
+            case Organs.KIDNEY:
+                first_organ = 2.0
+                second_organ = 3.0
+            case Organs.LUNG_LOWER:
+                first_organ = 14.0
+                second_organ = 17.0
+            case Organs.LUNG_UPPER:
+                first_organ = 13.0
+                second_organ = 15.0
+
+        frame = self.vtkSegmentation.match(first_organ, second_organ)
         self.setup_main_window(frame)
         self.show()
 
     def start_adjusting(self) -> None:
-        pass
+        frame = self.vtkSegmentation.adjust()
+        self.setup_main_window(frame)
+        self.show()
 
     def load_input_directory_path(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, 'Choose input directory', '.')
