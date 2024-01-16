@@ -2,10 +2,8 @@ from enum import Enum
 
 
 class Organs(str, Enum):
-    KIDNEY = 'kidney'
-    ADRENAL_GLAND = 'adrenal gland'
-    LUNG_UPPER = 'lung upper'
-    LUNG_LOWER = 'lung lower'
+    KIDNEY = 'Kidney'
+    LUNG_LOWER = 'Lung lower'
 
     @staticmethod
     def get_all_options():

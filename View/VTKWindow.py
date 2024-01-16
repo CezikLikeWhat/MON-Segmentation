@@ -174,6 +174,8 @@ class VTKSegmentation:
 
         self.secondActor = self.create_actor(transformedPolyData, self.lookupTable)
 
+        self.renderer.ResetCamera()
+
         self.renderer.AddActor(self.secondActor)
         self.renderWindow.Render()
 
