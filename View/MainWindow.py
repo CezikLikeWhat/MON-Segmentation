@@ -1,7 +1,7 @@
 import vtk
 from PyQt5 import Qt
 from PyQt5.QtWidgets import QFileDialog, QComboBox, QGroupBox, QPushButton, QGridLayout, QLabel, QHBoxLayout, \
-    QVBoxLayout, qApp, QFrame
+    QVBoxLayout, QFrame
 from moosez.resources import check_cuda
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -36,7 +36,7 @@ class MainWindow(Qt.QMainWindow):
 
         self.vtkSegmentation = VTKSegmentation()
 
-        self.vtkWidget = None
+        self.vtkWidget: QVTKRenderWindowInteractor | None = None
 
         self.setup_main_window()
 
@@ -164,7 +164,6 @@ class MainWindow(Qt.QMainWindow):
         self.setCentralWidget(vtkFrame)
 
     def load_nifti_file(self, filepath: str | None) -> None:
-        filepath = '/Users/cezarymackowski/Python/Mon-segmentation/MOOSEv2_data/S1/moosez-clin_ct_organs-2023-11-20-18-50-45/segmentations/CT_Organs_CT_8_abdpanc_30_b31f_0000.nii.gz'
         if filepath is None:
             filepath = QFileDialog.getOpenFileName(self, 'Choose NIFTI file', '.', '*.nii.gz')[0]
             if filepath == '':
@@ -253,6 +252,7 @@ class MainWindow(Qt.QMainWindow):
 
         self.vtkSegmentation.renderer.ResetCamera()
         self.vtkSegmentation.renderWindow.Render()
+        self.show()
 
         print(f'Distance before fit: {self.distance_before_value}')
         print(f'Distance after fit: {self.distance_after_value}')
@@ -265,8 +265,8 @@ class MainWindow(Qt.QMainWindow):
         transformFilter.Update()
 
         self.vtkSegmentation.update_actor_transform(transformFilter.GetOutput())
-        self.vtkSegmentation.renderWidget.Render()
-        qApp.processEvents()
+        # self.vtkSegmentation.renderWidget.Render()
+        # qApp.processEvents()
 
         hausdorff_distance.SetInputData(0, self.vtkSegmentation.firstPolyData)
         hausdorff_distance.SetInputData(1, transformFilter.GetOutput())
@@ -278,6 +278,7 @@ class MainWindow(Qt.QMainWindow):
                                                  GetArray("HausdorffDistance").
                                                  GetComponent(0, 0)
                                                  )
+        self.vtkSegmentation.renderWidget.Render()
         return distance_after_fit
 
     def load_input_directory_path(self) -> None:
