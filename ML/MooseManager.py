@@ -25,7 +25,6 @@ class MooseManager:
 
     def __find_newest_nifti_file(self) -> str:
         list_of_segmentation_files = os.listdir(self.output_dir)
-        print(list_of_segmentation_files)
         return f'{self.output_dir}/{list_of_segmentation_files[0]}'
 
     def __prepare_dicoms_to_nifti(self) -> None:

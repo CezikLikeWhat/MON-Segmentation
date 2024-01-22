@@ -26,17 +26,27 @@ class VTKSegmentation:
         self.rotation = [0.0, 0.0, 0.0]
         self.scale = [1.0, 1.0, 1.0]
 
+        colors = vtk.vtkNamedColors()
+        axes = vtk.vtkAxesActor()
+        self.widget = vtk.vtkOrientationMarkerWidget()
+        rgba = [0.0, 0.0, 0.0, 0.0]
+        colors.GetColor("Carrot", rgba)
+        self.widget.SetOutlineColor(rgba[0], rgba[1], rgba[2])
+        self.widget.SetOrientationMarker(axes)
+        self.widget.SetInteractor(self.renderWidget)
+        self.widget.SetViewport(0.8, 0.8, 1.0, 1.0)
+        self.widget.EnabledOn()
+        self.widget.SetInteractive(0)
+
+        # self.camOrientManipulator = vtk.vtkCameraOrientationWidget()
+        # self.camOrientManipulator.SetParentRenderer(self.renderer)
+        # self.camOrientManipulator.On()
+
     def create_mesh(self, nifti_file_path: str) -> Qt.QFrame:
-        # Logger.info('Start create_mesh')
-
-        # iren = self.renderWindow.GetInteractor()
-
-        # Logger.info('Before reader')
         reader = vtk.vtkNIFTIImageReader()
         reader.SetFileName(nifti_file_path)
         reader.Update()
 
-        # Logger.info('Before imagedata')
         imageData: vtk.vtkImageData = reader.GetOutput()
 
         dimensions = imageData.GetDimensions()
@@ -63,7 +73,7 @@ class VTKSegmentation:
 
         # Logger.info('Before random Sequence')
         randomSequence = vtk.vtkMinimalStandardRandomSequence()
-        randomSequence.SetSeed(2137)
+        randomSequence.SetSeed(303091)
 
         for i in range(1, len(self.uniqueValues) + 1):
             r = randomSequence.GetRangeValue(0.0, 1.0)
@@ -74,7 +84,6 @@ class VTKSegmentation:
             randomSequence.Next()
             self.lookupTable.SetTableValue(i, r, g, b)
 
-        # Logger.info('Before mesh mapper')
         if self.firstActor is not None:
             self.renderer.RemoveActor(self.firstActor)
             self.firstActor.FastDelete()
@@ -180,6 +189,29 @@ class VTKSegmentation:
         self.renderWindow.Render()
 
         return self.frame
+
+    def perform_icp_step(self, max_iterations: int):
+        icp = vtk.vtkIterativeClosestPointTransform()
+        icp.SetSource(self.secondPolyData)
+        icp.SetTarget(self.firstPolyData)
+        icp.GetLandmarkTransform().SetModeToRigidBody()
+        icp.SetMaximumNumberOfLandmarks(500)
+        icp.SetMaximumMeanDistance(.00001)
+        icp.SetMaximumNumberOfIterations(max_iterations)
+        icp.CheckMeanDistanceOn()
+        icp.Update()
+
+        return icp
+
+    def update_actor_transform(self, poly_data: vtk.vtkPolyData):
+        if self.secondActor is not None:
+            self.renderer.RemoveActor(self.secondActor)
+            self.secondActor.SetMapper(None)
+            self.secondActor = None
+
+        self.secondActor = self.create_actor(poly_data, self.lookupTable)
+        self.renderer.AddActor(self.secondActor)
+        self.renderWindow.Render()
 
     def create_actor(self, poly_data: vtk.vtkPolyData, lookup_table: vtk.vtkLookupTable) -> vtk.vtkActor:
         mapper = vtk.vtkPolyDataMapper()

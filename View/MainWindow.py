@@ -1,6 +1,7 @@
+import vtk
 from PyQt5 import Qt
 from PyQt5.QtWidgets import QFileDialog, QComboBox, QGroupBox, QPushButton, QGridLayout, QLabel, QHBoxLayout, \
-    QVBoxLayout
+    QVBoxLayout, qApp, QFrame
 from moosez.resources import check_cuda
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
@@ -20,6 +21,11 @@ class MainWindow(Qt.QMainWindow):
         Qt.QMainWindow.__init__(self, parent)
 
         # Init variables
+        self.frame: QFrame | None = None
+        self.distance_before_value = ''
+        self.distance_after_value = ''
+        self.distance_before_label_value: QLabel | None = None
+        self.distance_after_label_value: QLabel | None = None
         self.model_type = ''
         self.model_accelerator = ''
         self.organ = ''
@@ -37,8 +43,6 @@ class MainWindow(Qt.QMainWindow):
         self.show()
 
     def setup_main_window(self, updated_frame: Qt.QFrame = None) -> None:
-        # General options
-        # self.setFixedSize(2560, 1440)
         self.setWindowTitle('Segmentation tool - MON 2023/2024')
 
         if updated_frame is None:
@@ -110,8 +114,8 @@ class MainWindow(Qt.QMainWindow):
         match_groupbox.setMaximumSize(400, 400)
 
         match_layout = QGridLayout()
-        match_layout.setColumnMinimumWidth(0, 20)
-        match_layout.setColumnMinimumWidth(1, 40)
+        match_layout.setColumnMinimumWidth(0, 10)
+        match_layout.setColumnMinimumWidth(1, 10)
 
         organ_label = QLabel('Organ:')
         organ_combobox = QComboBox()
@@ -127,10 +131,19 @@ class MainWindow(Qt.QMainWindow):
         adjust_button.setFixedWidth(175)
         adjust_button.clicked.connect(self.start_adjusting)
 
+        distance_before_label = QLabel('Distance before adjust:')
+        self.distance_before_label_value = QLabel(self.distance_before_value)
+        distance_after_label = QLabel('Distance after adjust:')
+        self.distance_after_label_value = QLabel(self.distance_after_value)
+
         match_layout.addWidget(organ_label, 0, 0)
-        match_layout.addWidget(organ_combobox, 0, 2)
-        match_layout.addWidget(segment_button, 1, 0)
-        match_layout.addWidget(adjust_button, 1, 2)
+        match_layout.addWidget(organ_combobox, 0, 1)
+        match_layout.addWidget(distance_before_label, 1, 0)
+        match_layout.addWidget(self.distance_before_label_value, 1, 1)
+        match_layout.addWidget(distance_after_label, 2, 0)
+        match_layout.addWidget(self.distance_after_label_value, 2, 1)
+        match_layout.addWidget(segment_button, 3, 0)
+        match_layout.addWidget(adjust_button, 3, 1)
 
         match_groupbox.setLayout(match_layout)
 
@@ -151,6 +164,7 @@ class MainWindow(Qt.QMainWindow):
         self.setCentralWidget(vtkFrame)
 
     def load_nifti_file(self, filepath: str | None) -> None:
+        filepath = '/Users/cezarymackowski/Python/Mon-segmentation/MOOSEv2_data/S1/moosez-clin_ct_organs-2023-11-20-18-50-45/segmentations/CT_Organs_CT_8_abdpanc_30_b31f_0000.nii.gz'
         if filepath is None:
             filepath = QFileDialog.getOpenFileName(self, 'Choose NIFTI file', '.', '*.nii.gz')[0]
             if filepath == '':
@@ -158,9 +172,9 @@ class MainWindow(Qt.QMainWindow):
                 (MessageBox())(self, MessageBoxType.ERROR, 'NIFTI file path not specified')
                 return
 
-        frame = self.vtkSegmentation.create_mesh(filepath)
+        self.frame = self.vtkSegmentation.create_mesh(filepath)
 
-        self.setup_main_window(frame)  # update gui with new VTK frame
+        self.setup_main_window(self.frame)  # update gui with new VTK frame
         self.show()
 
     def start_predict(self) -> None:
@@ -197,7 +211,6 @@ class MainWindow(Qt.QMainWindow):
     def start_segmenting(self) -> None:
         first_organ = None
         second_organ = None
-        print(self.organ)
         match self.organ:
             case Organs.KIDNEY:
                 first_organ = 2.0
@@ -205,18 +218,67 @@ class MainWindow(Qt.QMainWindow):
             case Organs.LUNG_LOWER:
                 first_organ = 14.0
                 second_organ = 17.0
-            case Organs.LUNG_UPPER:
-                first_organ = 13.0
-                second_organ = 15.0
 
-        frame = self.vtkSegmentation.match(first_organ, second_organ)
-        self.setup_main_window(frame)
+        self.frame = self.vtkSegmentation.match(first_organ, second_organ)
+        self.setup_main_window(self.frame)
         self.show()
 
     def start_adjusting(self) -> None:
-        frame = self.vtkSegmentation.adjust()
-        self.setup_main_window(frame)
-        self.show()
+        distance = vtk.vtkHausdorffDistancePointSetFilter()
+        distance.SetInputData(0, self.vtkSegmentation.firstPolyData)
+        distance.SetInputData(1, self.vtkSegmentation.secondPolyData)
+        distance.Update()
+
+        distance_before_fit: vtk.VTK_POINT_SET = (distance.
+                                                  GetOutput(0).
+                                                  GetFieldData().
+                                                  GetArray("HausdorffDistance").
+                                                  GetComponent(0, 0)
+                                                  )
+        previous_max_iteration = -1
+        distance_after_fit = None
+        for i in range(1, 100, 2):
+            icp = self.vtkSegmentation.perform_icp_step(i)
+            distance_after_fit = self.apply_transform_and_render(icp, distance)
+            current_max_iteration = icp.GetNumberOfIterations()
+            if current_max_iteration == previous_max_iteration:
+                break
+
+            previous_max_iteration = current_max_iteration
+
+        self.distance_before_value = str(distance_before_fit)
+        self.distance_before_label_value.setText(self.distance_before_value)
+        self.distance_after_value = str(distance_after_fit)
+        self.distance_after_label_value.setText(self.distance_after_value)
+
+        self.vtkSegmentation.renderer.ResetCamera()
+        self.vtkSegmentation.renderWindow.Render()
+
+        print(f'Distance before fit: {self.distance_before_value}')
+        print(f'Distance after fit: {self.distance_after_value}')
+
+    def apply_transform_and_render(self, icp, hausdorff_distance):
+        transformFilter = vtk.vtkTransformPolyDataFilter()
+        transformFilter.SetInputData(self.vtkSegmentation.secondPolyData)
+        transformFilter.SetTransform(icp.GetLandmarkTransform())
+        transformFilter.SetTransform(icp)
+        transformFilter.Update()
+
+        self.vtkSegmentation.update_actor_transform(transformFilter.GetOutput())
+        self.vtkSegmentation.renderWidget.Render()
+        qApp.processEvents()
+
+        hausdorff_distance.SetInputData(0, self.vtkSegmentation.firstPolyData)
+        hausdorff_distance.SetInputData(1, transformFilter.GetOutput())
+        hausdorff_distance.Update()
+
+        distance_after_fit: vtk.VTK_POINT_SET = (hausdorff_distance.
+                                                 GetOutput(0).
+                                                 GetFieldData().
+                                                 GetArray("HausdorffDistance").
+                                                 GetComponent(0, 0)
+                                                 )
+        return distance_after_fit
 
     def load_input_directory_path(self) -> None:
         directory = QFileDialog.getExistingDirectory(self, 'Choose input directory', '.')
