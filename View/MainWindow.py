@@ -249,6 +249,7 @@ class MainWindow(Qt.QMainWindow):
         self.distance_before_label_value.setText(self.distance_before_value)
         self.distance_after_value = str(distance_after_fit)
         self.distance_after_label_value.setText(self.distance_after_value)
+        Qt.qApp.processEvents()
 
         self.vtkSegmentation.renderer.ResetCamera()
         self.vtkSegmentation.renderWindow.Render()
